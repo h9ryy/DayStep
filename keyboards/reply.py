@@ -9,6 +9,9 @@ def get_main_menu() -> ReplyKeyboardMarkup:
         ],
         [
             KeyboardButton(text="🏆 Топ игроков"),
+            KeyboardButton(text="🎖 Достижения"),
+        ],
+        [
             KeyboardButton(text="ℹ️ О боте")
         ]
     ]

@@ -1,5 +1,5 @@
 import html
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 def format_quest_message(quest: Dict[str, Any], is_morning: bool = False) -> str:
@@ -21,10 +21,11 @@ def format_quest_message(quest: Dict[str, Any], is_morning: bool = False) -> str
     return text
 
 
-def format_profile_message(user: Dict[str, Any]) -> str:
+def format_profile_message(user: Dict[str, Any], unlocked_achievements_count: int = 0, total_achievements_count: int = 8) -> str:
     streak = user.get("current_streak", 0)
     max_streak = user.get("max_streak", 0)
     total = user.get("total_completed", 0)
+    freezes = user.get("freezes", 1)
     raw_name = user.get("first_name") or "Герой"
     name = html.escape(str(raw_name))
 
@@ -42,13 +43,42 @@ def format_profile_message(user: Dict[str, Any]) -> str:
         level_title = "Легенда Daystep 🌟"
 
     return (
-        f"👤 <b>Профиль {name}</b>\n\n"
+        f"👤 <b>Профиль игрока {name}</b>\n\n"
         f"🔥 <b>Текущий стрик:</b> {streak} дн.\n"
         f"⭐ <b>Рекордный стрик:</b> {max_streak} дн.\n"
-        f"🎯 <b>Всего квестов выполнено:</b> {total}\n"
-        f"🎖 <b>Ранг:</b> {level_title}\n\n"
-        f"💡 <i>Совет: Не пропускай дни, чтобы стрик не сгорел!</i>"
+        f"❄️ <b>Запас заморозок:</b> {freezes} шт.\n"
+        f"🎯 <b>Всего квестов:</b> {total}\n"
+        f"🎖 <b>Достижений открыто:</b> {unlocked_achievements_count} из {total_achievements_count}\n"
+        f"👑 <b>Ранг:</b> {level_title}\n\n"
+        f"💡 <i>Заморозка автоматически спасет стрик при пропуске дня!</i>"
     )
+
+
+def format_achievements_message(achievements: List[Dict[str, Any]]) -> str:
+    if not achievements:
+        return "🎖 <b>Список достижений пуст.</b>"
+
+    unlocked_count = sum(1 for a in achievements if a.get("is_unlocked"))
+    total_count = len(achievements)
+
+    lines = [
+        f"🎖 <b>Твои достижения ({unlocked_count}/{total_count}):</b>\n"
+    ]
+
+    for a in achievements:
+        title = html.escape(a["title"])
+        desc = html.escape(a["description"])
+        reward = a.get("reward_freezes", 0)
+        reward_text = f" <i>(+{reward} ❄️)</i>" if reward > 0 else ""
+
+        if a.get("is_unlocked"):
+            lines.append(f"✅ <b>{title}</b>{reward_text}\n   └ {desc}\n")
+        else:
+            curr = a.get("current_val", 0)
+            target = a.get("target", 1)
+            lines.append(f"🔒 <b>{title}</b> <i>({curr}/{target})</i>{reward_text}\n   └ {desc}\n")
+
+    return "\n".join(lines)
 
 
 def format_leaderboard_message(all_users: list, current_user_id: int, top_n: int = 10) -> str:
@@ -84,4 +114,3 @@ def format_leaderboard_message(all_users: list, current_user_id: int, top_n: int
         lines.append("💡 Выполни квест сегодня, чтобы появиться в рейтинге!")
 
     return "\n".join(lines)
-

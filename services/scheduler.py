@@ -9,7 +9,13 @@ import aiosqlite
 from datetime import date
 
 from config import TIMEZONE, DEFAULT_QUEST_HOUR, REMINDER_HOUR, DB_PATH
-from database.db import get_all_active_users, assign_today_quest, get_today_quest
+from database.db import (
+    get_all_active_users,
+    assign_today_quest,
+    get_today_quest,
+    check_and_use_freeze_if_missed,
+    get_user
+)
 from keyboards.inline import get_quest_keyboard
 from services.formatters import format_quest_message
 
@@ -23,10 +29,26 @@ async def send_daily_quests(bot: Bot):
 
     for user_id in user_ids:
         try:
+            # 1. Проверяем, не спас ли стрик режим заморозки
+            was_frozen = await check_and_use_freeze_if_missed(user_id, today_str)
+            if was_frozen:
+                user = await get_user(user_id)
+                rem = user.get("freezes", 0) if user else 0
+                freeze_notice = (
+                    "❄️ <b>Твой стрик спасён!</b>\n\n"
+                    "Вчера ты не успел выполнить квест, но автоматически сработала заморозка.\n"
+                    f"Твоя серия дней осталась цела! Оставшиеся заморозки: <b>{rem} шт.</b>\n\n"
+                    "Не пропускай сегодняшнее задание 👇"
+                )
+                await bot.send_message(user_id, freeze_notice)
+                await asyncio.sleep(0.05)
+
+            # 2. Назначаем и отправляем квест дня
             quest = await assign_today_quest(user_id, today_str)
             quest_text = format_quest_message(quest, is_morning=True)
             keyboard = get_quest_keyboard(quest["status"], quest.get("reroll_count", 0))
             await bot.send_message(user_id, quest_text, reply_markup=keyboard)
+
         except TelegramRetryAfter as e:
             logger.warning(f"Flood control exceeded. Sleeping for {e.retry_after} seconds.")
             await asyncio.sleep(e.retry_after)
@@ -42,7 +64,6 @@ async def send_daily_quests(bot: Bot):
         except Exception as e:
             logger.warning(f"Failed to send daily quest to user {user_id}: {e}")
 
-        # Защита от лимитов Telegram (не более ~20 сообщений в секунду)
         await asyncio.sleep(0.05)
 
 
@@ -80,7 +101,6 @@ async def send_evening_reminders(bot: Bot):
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
-    # Утренняя рассылка в DEFAULT_QUEST_HOUR:00
     scheduler.add_job(
         send_daily_quests,
         trigger=CronTrigger(hour=DEFAULT_QUEST_HOUR, minute=0, timezone=TIMEZONE),
@@ -88,7 +108,6 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         name="daily_quests"
     )
 
-    # Вечернее напоминание в REMINDER_HOUR:00
     scheduler.add_job(
         send_evening_reminders,
         trigger=CronTrigger(hour=REMINDER_HOUR, minute=0, timezone=TIMEZONE),

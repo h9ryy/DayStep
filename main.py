@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 
 from config import BOT_TOKEN
 from database.db import init_db
-from handlers import start, quests, profile, leaderboard
+from handlers import start, quests, profile, leaderboard, achievements
 from middlewares.throttling import ThrottlingMiddleware
 from services.scheduler import setup_scheduler
 
@@ -30,23 +30,24 @@ async def main():
     await init_db()
     logger.info("База данных успешно инициализирована.")
 
-    # Инициализация бота с HTML разметкой (безопасной к спецсимволам)
+    # Инициализация бота с безопасным режимом HTML
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher()
 
-    # Защита от спама и частых нажатий (Throttling / Anti-flood)
+    # Защита от спама и частых нажатий (Throttling)
     throttling_middleware = ThrottlingMiddleware(rate_limit=0.8)
     dp.message.middleware(throttling_middleware)
     dp.callback_query.middleware(throttling_middleware)
 
-    # Регистрация хэндлеров
+    # Регистрация всех хэндлеров
     dp.include_router(start.router)
     dp.include_router(quests.router)
     dp.include_router(profile.router)
     dp.include_router(leaderboard.router)
+    dp.include_router(achievements.router)
 
     # Настройка планировщика рассылок
     scheduler = setup_scheduler(bot)
