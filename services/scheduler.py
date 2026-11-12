@@ -1,5 +1,8 @@
+import asyncio
+import html
 import logging
 from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import aiosqlite
@@ -24,12 +27,23 @@ async def send_daily_quests(bot: Bot):
             quest_text = format_quest_message(quest, is_morning=True)
             keyboard = get_quest_keyboard(quest["status"], quest.get("reroll_count", 0))
             await bot.send_message(user_id, quest_text, reply_markup=keyboard)
+        except TelegramRetryAfter as e:
+            logger.warning(f"Flood control exceeded. Sleeping for {e.retry_after} seconds.")
+            await asyncio.sleep(e.retry_after)
+            try:
+                await bot.send_message(user_id, quest_text, reply_markup=keyboard)
+            except Exception as retry_err:
+                logger.error(f"Failed to send on retry to user {user_id}: {retry_err}")
+        except TelegramForbiddenError:
+            logger.info(f"User {user_id} blocked the bot. Deactivating.")
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("UPDATE users SET is_active = 0 WHERE user_id = ?", (user_id,))
+                await db.commit()
         except Exception as e:
             logger.warning(f"Failed to send daily quest to user {user_id}: {e}")
-            if "bot was blocked by the user" in str(e).lower():
-                async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute("UPDATE users SET is_active = 0 WHERE user_id = ?", (user_id,))
-                    await db.commit()
+
+        # Защита от лимитов Telegram (не более ~20 сообщений в секунду)
+        await asyncio.sleep(0.05)
 
 
 async def send_evening_reminders(bot: Bot):
@@ -41,16 +55,26 @@ async def send_evening_reminders(bot: Bot):
         try:
             quest = await get_today_quest(user_id, today_str)
             if quest and quest["status"] == "pending":
+                escaped_title = html.escape(str(quest['title']))
                 reminder_text = (
-                    "⏰ **Вечернее напоминание от Daystep!**\n\n"
+                    "⏰ <b>Вечернее напоминание от Daystep!</b>\n\n"
                     f"До конца дня осталось несколько часов, а твой квест еще не закрыт:\n"
-                    f"📌 **{quest['title']}**\n\n"
+                    f"📌 <b>{escaped_title}</b>\n\n"
                     f"Не дай своему огню погаснуть! Выполни задание и нажми кнопку ниже 👇"
                 )
                 keyboard = get_quest_keyboard(quest["status"], quest.get("reroll_count", 0))
                 await bot.send_message(user_id, reminder_text, reply_markup=keyboard)
+        except TelegramRetryAfter as e:
+            logger.warning(f"Flood control exceeded in reminders. Sleeping for {e.retry_after}s.")
+            await asyncio.sleep(e.retry_after)
+        except TelegramForbiddenError:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("UPDATE users SET is_active = 0 WHERE user_id = ?", (user_id,))
+                await db.commit()
         except Exception as e:
             logger.warning(f"Failed to send reminder to user {user_id}: {e}")
+
+        await asyncio.sleep(0.05)
 
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:

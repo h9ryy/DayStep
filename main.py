@@ -9,6 +9,7 @@ from aiogram.enums import ParseMode
 from config import BOT_TOKEN
 from database.db import init_db
 from handlers import start, quests, profile
+from middlewares.throttling import ThrottlingMiddleware
 from services.scheduler import setup_scheduler
 
 logging.basicConfig(
@@ -29,12 +30,17 @@ async def main():
     await init_db()
     logger.info("База данных успешно инициализирована.")
 
-    # Инициализация бота и диспетчера
+    # Инициализация бота с HTML разметкой (безопасной к спецсимволам)
     bot = Bot(
         token=BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher()
+
+    # Защита от спама и частых нажатий (Throttling / Anti-flood)
+    throttling_middleware = ThrottlingMiddleware(rate_limit=0.8)
+    dp.message.middleware(throttling_middleware)
+    dp.callback_query.middleware(throttling_middleware)
 
     # Регистрация хэндлеров
     dp.include_router(start.router)

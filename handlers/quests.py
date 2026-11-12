@@ -1,10 +1,10 @@
+import html
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 
 from database.db import (
     assign_today_quest,
-    get_today_quest,
     reroll_today_quest,
     complete_today_quest
 )
@@ -36,12 +36,13 @@ async def handle_quest_done(callback: CallbackQuery):
 
     streak = result["new_streak"]
     streak_word = "день" if streak % 10 == 1 and streak % 100 != 11 else ("дня" if 2 <= streak % 10 <= 4 and (streak % 100 < 10 or streak % 100 >= 20) else "дней")
+    quest_title = html.escape(str(result.get("quest_title", "")))
 
     congrats_text = (
-        f"🎉 **Отличная работа! Квест выполнен!**\n\n"
-        f"✅ Задание: *{result['quest_title']}*\n"
-        f"🔥 Твой текущий стрик: **{streak} {streak_word} подряд!**\n"
-        f"🏆 Всего выполнено квестов: **{result['total_completed']}**\n\n"
+        f"🎉 <b>Отличная работа! Квест выполнен!</b>\n\n"
+        f"✅ Задание: <i>{quest_title}</i>\n"
+        f"🔥 Твой текущий стрик: <b>{streak} {streak_word} подряд!</b>\n"
+        f"🏆 Всего выполнено квестов: <b>{result['total_completed']}</b>\n\n"
         f"Увидимся завтра утром с новым заданием! 🚀"
     )
 
@@ -62,7 +63,7 @@ async def handle_quest_reroll(callback: CallbackQuery):
     keyboard = get_quest_keyboard(new_quest["status"], new_quest.get("reroll_count", 0))
 
     await callback.message.edit_text(
-        f"🔄 **Квест успешно заменен!**\n\n{quest_text}",
+        f"🔄 <b>Квест успешно заменен!</b>\n\n{quest_text}",
         reply_markup=keyboard
     )
     await callback.answer("Квест заменен на новый!")
