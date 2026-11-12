@@ -12,4 +12,5 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 DEFAULT_QUEST_HOUR = int(os.getenv("DEFAULT_QUEST_HOUR", "9"))
 REMINDER_HOUR = int(os.getenv("REMINDER_HOUR", "20"))
+MIN_QUEST_MINUTES = int(os.getenv("MIN_QUEST_MINUTES", "5"))
 DB_PATH = BASE_DIR / "daystep.db"

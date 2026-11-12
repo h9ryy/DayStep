@@ -31,6 +31,21 @@ async def handle_quest_done(callback: CallbackQuery):
     result = await complete_today_quest(user_id)
 
     if not result.get("success"):
+        # Если попытка завершить квест слишком рано (< 5 минут)
+        if result.get("too_fast"):
+            rem_min = result["rem_min"]
+            rem_sec = result["rem_sec"]
+            passed_sec = result["passed_seconds"]
+            rem_str = f"{rem_min} мин. {rem_sec} сек." if rem_min > 0 else f"{rem_sec} сек."
+            alert_msg = (
+                f"⏳ Не так быстро!\n\n"
+                f"Ты получил задание всего {passed_sec} сек. назад. "
+                f"Его невозможно выполнить за такое время 😉\n\n"
+                f"Выполни квест по-настоящему и возвращайся через {rem_str}!"
+            )
+            await callback.answer(alert_msg, show_alert=True)
+            return
+
         await callback.answer(result.get("error", "Ошибка при выполнении"), show_alert=True)
         return
 
@@ -47,7 +62,6 @@ async def handle_quest_done(callback: CallbackQuery):
         f"🏆 Всего выполнено квестов: <b>{result['total_completed']}</b>\n"
     )
 
-    # Добавляем поздравление с новыми открытыми достижениями
     newly_unlocked = result.get("newly_unlocked", [])
     if newly_unlocked:
         congrats_text += "\n" + "—" * 22 + "\n"
@@ -58,7 +72,7 @@ async def handle_quest_done(callback: CallbackQuery):
             reward_str = f" <i>(Награда: +{reward} ❄️ заморозка!)</i>" if reward > 0 else ""
             congrats_text += f"🎖 <b>НОВОЕ ДОСТИЖЕНИЕ: {ach_title}!</b>{reward_str}\n<i>{ach_desc}</i>\n\n"
 
-    congrats_text += "Увидимся завтра утром с новым заданием! 🚀"
+    congrats_text += "Увидимся завтра с новым заданием! 🚀"
 
     await callback.message.edit_text(congrats_text)
     await callback.answer("Красавчик! Задание засчитано 🔥")
@@ -80,4 +94,4 @@ async def handle_quest_reroll(callback: CallbackQuery):
         f"🔄 <b>Квест успешно заменен!</b>\n\n{quest_text}",
         reply_markup=keyboard
     )
-    await callback.answer("Квест заменен на новый!")
+    await callback.answer("Квест заменен на новый! Таймер запущен заново.")

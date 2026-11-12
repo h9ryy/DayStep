@@ -5,6 +5,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand, BotCommandScopeDefault
 
 from config import BOT_TOKEN
 from database.db import init_db
@@ -18,6 +19,21 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+
+async def set_bot_commands(bot: Bot):
+    """Автоматическая регистрация команд в меню Telegram и BotFather."""
+    commands = [
+        BotCommand(command="quest", description="🎯 Квест на сегодня"),
+        BotCommand(command="profile", description="🔥 Мой стрик и профиль"),
+        BotCommand(command="top", description="🏆 Таблица лидеров"),
+        BotCommand(command="achievements", description="🎖 Мои достижения"),
+        BotCommand(command="suggest", description="💡 Предложить свой квест"),
+        BotCommand(command="settings", description="⚙️ Время рассылки"),
+        BotCommand(command="help", description="ℹ️ О проекте и правила"),
+    ]
+    await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+    logger.info("Подсказки команд успешно зарегистрированы в меню Telegram.")
 
 
 async def main():
@@ -50,6 +66,9 @@ async def main():
     dp.include_router(achievements.router)
     dp.include_router(settings.router)
     dp.include_router(suggestions.router)
+
+    # Автоматическая настройка кнопки "Меню" с подсказками команд
+    await set_bot_commands(bot)
 
     # Настройка планировщика рассылок
     scheduler = setup_scheduler(bot)

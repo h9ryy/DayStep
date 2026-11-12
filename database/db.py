@@ -3,7 +3,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 import random
 
-from config import DB_PATH
+from config import DB_PATH, MIN_QUEST_MINUTES
 from database.initial_quests import INITIAL_QUESTS
 from database.initial_achievements import INITIAL_ACHIEVEMENTS
 
@@ -241,7 +241,7 @@ async def get_today_quest(user_id: int, today_str: Optional[str] = None) -> Opti
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         query = """
-            SELECT uq.id as user_quest_id, uq.status, uq.assigned_date, uq.reroll_count,
+            SELECT uq.id as user_quest_id, uq.status, uq.assigned_date, uq.reroll_count, uq.assigned_at,
                    q.id as quest_id, q.category, q.title, q.description
             FROM user_quests uq
             JOIN quests q ON uq.quest_id = q.id
@@ -319,12 +319,14 @@ async def reroll_today_quest(user_id: int, today_str: Optional[str] = None) -> O
             return current
 
         new_quest = random.choice(available)
+        now_str = datetime.now().isoformat()
 
+        # При замене квеста обновляем и время назначения
         await db.execute(
             """UPDATE user_quests 
-               SET quest_id = ?, reroll_count = reroll_count + 1 
+               SET quest_id = ?, reroll_count = reroll_count + 1, assigned_at = ?
                WHERE id = ?""",
-            (new_quest["id"], current["user_quest_id"])
+            (new_quest["id"], now_str, current["user_quest_id"])
         )
         await db.commit()
 
@@ -426,6 +428,7 @@ async def get_user_achievements_progress(user_id: int) -> List[Dict[str, Any]]:
             GROUP BY q.category
         """
         async with db.execute(category_counts_query, (user_id,)) as cursor:
+            cat_rows = await cursor.fetchall()
             cat_counts = {row["category"]: row["cnt"] for row in cat_rows}
 
         result = []
@@ -470,6 +473,31 @@ async def complete_today_quest(user_id: int, today_str: Optional[str] = None) ->
 
         if current_quest["status"] == "completed":
             return {"success": False, "error": "Квест уже был выполнен"}
+
+        # Проверка минимального времени выполнения (защита от читерства)
+        assigned_at_str = current_quest.get("assigned_at")
+        if assigned_at_str:
+            try:
+                assigned_time = datetime.fromisoformat(assigned_at_str)
+                now = datetime.now()
+                total_seconds = (now - assigned_time).total_seconds()
+                required_seconds = MIN_QUEST_MINUTES * 60
+
+                if total_seconds < required_seconds:
+                    rem_sec_total = int(required_seconds - total_seconds)
+                    rem_min = rem_sec_total // 60
+                    rem_sec = rem_sec_total % 60
+                    return {
+                        "success": False,
+                        "too_fast": True,
+                        "error": "too_fast",
+                        "passed_seconds": int(total_seconds),
+                        "rem_min": rem_min,
+                        "rem_sec": rem_sec,
+                        "min_minutes": MIN_QUEST_MINUTES
+                    }
+            except Exception:
+                pass
 
         now_str = datetime.now().isoformat()
         await db.execute(
@@ -542,7 +570,6 @@ async def get_leaderboard(limit: int = 10) -> List[Dict[str, Any]]:
 # --- UGC Квесты от пользователей ---
 
 async def create_quest_suggestion(user_id: int, category: str, title: str, description: str) -> int:
-    """Создает заявку на квест со статусом pending."""
     now_str = datetime.now().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -563,7 +590,6 @@ async def get_quest_suggestion(suggestion_id: int) -> Optional[Dict[str, Any]]:
 
 
 async def approve_quest_suggestion(suggestion_id: int) -> Optional[Dict[str, Any]]:
-    """Одобряет квест, добавляет его в общую базу и дарит автору +1 заморозку."""
     suggestion = await get_quest_suggestion(suggestion_id)
     if not suggestion or suggestion["status"] != "pending":
         return None
@@ -571,19 +597,16 @@ async def approve_quest_suggestion(suggestion_id: int) -> Optional[Dict[str, Any
     user_id = suggestion["user_id"]
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # Добавляем в общий пул квестов
         await db.execute(
             "INSERT INTO quests (category, title, description) VALUES (?, ?, ?)",
             (suggestion["category"], suggestion["title"], suggestion["description"])
         )
 
-        # Обновляем статус заявки
         await db.execute(
             "UPDATE quest_suggestions SET status = 'approved' WHERE id = ?",
             (suggestion_id,)
         )
 
-        # Дарим автору 1 заморозку стрика
         await db.execute(
             "UPDATE users SET freezes = freezes + 1 WHERE user_id = ?",
             (user_id,)
