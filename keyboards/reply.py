@@ -12,6 +12,10 @@ def get_main_menu() -> ReplyKeyboardMarkup:
             KeyboardButton(text="🎖 Достижения"),
         ],
         [
+            KeyboardButton(text="⚙️ Настройки"),
+            KeyboardButton(text="💡 Предложить квест"),
+        ],
+        [
             KeyboardButton(text="ℹ️ О боте")
         ]
     ]

@@ -21,16 +21,22 @@ async def init_db():
                 last_completed_date TEXT,
                 total_completed INTEGER DEFAULT 0,
                 freezes INTEGER DEFAULT 1,
+                notify_hour INTEGER DEFAULT 9,
                 is_active INTEGER DEFAULT 1
             )
         """)
 
-        # Миграция: добавляем колонку freezes, если таблица была создана ранее без нее
+        # Миграции для существующих баз данных
         try:
             await db.execute("ALTER TABLE users ADD COLUMN freezes INTEGER DEFAULT 1")
-            await db.commit()
         except Exception:
             pass
+
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN notify_hour INTEGER DEFAULT 9")
+        except Exception:
+            pass
+        await db.commit()
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS quests (
@@ -80,6 +86,19 @@ async def init_db():
                 UNIQUE(user_id, achievement_code)
             )
         """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS quest_suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                category TEXT,
+                title TEXT,
+                description TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(user_id)
+            )
+        """)
         await db.commit()
 
         # Заполняем квесты, если таблица пуста
@@ -118,7 +137,6 @@ def calculate_active_streak(user: Dict[str, Any], today_str: Optional[str] = Non
     today = date.fromisoformat(today_str)
     yesterday_str = (today - timedelta(days=1)).isoformat()
 
-    # Стрик активен, только если квест выполнен сегодня или вчера (или вчера был заморожен)
     if last_date == today_str or last_date == yesterday_str:
         return user.get("current_streak", 0)
     return 0
@@ -136,8 +154,8 @@ async def get_or_create_user(user_id: int, username: Optional[str], first_name: 
 
         now_str = datetime.now().isoformat()
         await db.execute(
-            """INSERT INTO users (user_id, username, first_name, created_at, freezes)
-               VALUES (?, ?, ?, ?, 1)""",
+            """INSERT INTO users (user_id, username, first_name, created_at, freezes, notify_hour)
+               VALUES (?, ?, ?, ?, 1, 9)""",
             (user_id, username or "", first_name or "Друг", now_str)
         )
         await db.commit()
@@ -159,6 +177,21 @@ async def get_user(user_id: int) -> Optional[Dict[str, Any]]:
             user_dict = dict(user)
             user_dict["current_streak"] = calculate_active_streak(user_dict)
             return user_dict
+
+
+async def update_user_notify_hour(user_id: int, hour: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET notify_hour = ? WHERE user_id = ?", (hour, user_id))
+        await db.commit()
+        return True
+
+
+async def get_users_by_notify_hour(hour: int) -> List[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        query = "SELECT user_id FROM users WHERE is_active = 1 AND notify_hour = ?"
+        async with db.execute(query, (hour,)) as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
 
 
 async def get_all_active_users() -> List[int]:
@@ -188,9 +221,7 @@ async def check_and_use_freeze_if_missed(user_id: int, today_str: Optional[str] 
         freezes = user["freezes"]
         streak = user["current_streak"]
 
-        # Если стрик больше 0 и последний выполненный день был позавчера (вчера пропустили)
         if streak > 0 and last_date == day_before_yesterday_str and freezes > 0:
-            # Списываем 1 заморозку и продвигаем дату на вчерашний день (стрик спасен)
             await db.execute(
                 """UPDATE users 
                    SET freezes = freezes - 1, last_completed_date = ? 
@@ -301,28 +332,23 @@ async def reroll_today_quest(user_id: int, today_str: Optional[str] = None) -> O
 
 
 async def check_and_unlock_achievements(user_id: int) -> List[Dict[str, Any]]:
-    """Проверяет условия и открывает новые достижения, начисляя награды."""
     newly_unlocked = []
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        # Загружаем данные пользователя
         async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
             user = await cursor.fetchone()
             if not user:
                 return []
             user_dict = dict(user)
 
-        # Загружаем уже открытые коды достижений
         async with db.execute("SELECT achievement_code FROM user_achievements WHERE user_id = ?", (user_id,)) as cursor:
             unlocked_codes = set(row[0] for row in await cursor.fetchall())
 
-        # Загружаем все доступные достижения
         async with db.execute("SELECT * FROM achievements") as cursor:
             all_achievements = [dict(row) for row in await cursor.fetchall()]
 
-        # Считаем количество выполненных квестов по категориям
         category_counts_query = """
             SELECT q.category, COUNT(*) as cnt
             FROM user_quests uq
@@ -379,7 +405,6 @@ async def check_and_unlock_achievements(user_id: int) -> List[Dict[str, Any]]:
 
 
 async def get_user_achievements_progress(user_id: int) -> List[Dict[str, Any]]:
-    """Возвращает список всех достижений с актуальным прогрессом пользователя."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
@@ -401,14 +426,13 @@ async def get_user_achievements_progress(user_id: int) -> List[Dict[str, Any]]:
             GROUP BY q.category
         """
         async with db.execute(category_counts_query, (user_id,)) as cursor:
-            cat_counts = {row["category"]: row["cnt"] for row in await cursor.fetchall()}
+            cat_counts = {row["category"]: row["cnt"] for row in cat_rows}
 
         result = []
         for ach in all_ach:
             code = ach["code"]
             is_unlocked = code in unlocked_dict
 
-            # Вычисляем текущий прогресс
             a_type = ach["type"]
             target = ach["target"]
             if a_type == "total":
@@ -455,7 +479,6 @@ async def complete_today_quest(user_id: int, today_str: Optional[str] = None) ->
             (now_str, current_quest["user_quest_id"])
         )
 
-        # Расчет стрика
         last_date_str = user["last_completed_date"]
         current_streak = user["current_streak"]
 
@@ -480,7 +503,6 @@ async def complete_today_quest(user_id: int, today_str: Optional[str] = None) ->
         )
         await db.commit()
 
-    # Проверяем новые достижения
     newly_unlocked = await check_and_unlock_achievements(user_id)
     refreshed_user = await get_user(user_id)
 
@@ -515,3 +537,72 @@ async def get_leaderboard(limit: int = 10) -> List[Dict[str, Any]]:
         async with db.execute(query, (today_str, yesterday_str)) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+
+# --- UGC Квесты от пользователей ---
+
+async def create_quest_suggestion(user_id: int, category: str, title: str, description: str) -> int:
+    """Создает заявку на квест со статусом pending."""
+    now_str = datetime.now().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO quest_suggestions (user_id, category, title, description, status, created_at)
+               VALUES (?, ?, ?, ?, 'pending', ?)""",
+            (user_id, category, title, description, now_str)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_quest_suggestion(suggestion_id: int) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM quest_suggestions WHERE id = ?", (suggestion_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def approve_quest_suggestion(suggestion_id: int) -> Optional[Dict[str, Any]]:
+    """Одобряет квест, добавляет его в общую базу и дарит автору +1 заморозку."""
+    suggestion = await get_quest_suggestion(suggestion_id)
+    if not suggestion or suggestion["status"] != "pending":
+        return None
+
+    user_id = suggestion["user_id"]
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Добавляем в общий пул квестов
+        await db.execute(
+            "INSERT INTO quests (category, title, description) VALUES (?, ?, ?)",
+            (suggestion["category"], suggestion["title"], suggestion["description"])
+        )
+
+        # Обновляем статус заявки
+        await db.execute(
+            "UPDATE quest_suggestions SET status = 'approved' WHERE id = ?",
+            (suggestion_id,)
+        )
+
+        # Дарим автору 1 заморозку стрика
+        await db.execute(
+            "UPDATE users SET freezes = freezes + 1 WHERE user_id = ?",
+            (user_id,)
+        )
+        await db.commit()
+
+    return suggestion
+
+
+async def reject_quest_suggestion(suggestion_id: int) -> Optional[Dict[str, Any]]:
+    suggestion = await get_quest_suggestion(suggestion_id)
+    if not suggestion or suggestion["status"] != "pending":
+        return None
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE quest_suggestions SET status = 'rejected' WHERE id = ?",
+            (suggestion_id,)
+        )
+        await db.commit()
+
+    return suggestion

@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 
 from config import BOT_TOKEN
 from database.db import init_db
-from handlers import start, quests, profile, leaderboard, achievements
+from handlers import start, quests, profile, leaderboard, achievements, settings, suggestions
 from middlewares.throttling import ThrottlingMiddleware
 from services.scheduler import setup_scheduler
 
@@ -48,6 +48,8 @@ async def main():
     dp.include_router(profile.router)
     dp.include_router(leaderboard.router)
     dp.include_router(achievements.router)
+    dp.include_router(settings.router)
+    dp.include_router(suggestions.router)
 
     # Настройка планировщика рассылок
     scheduler = setup_scheduler(bot)

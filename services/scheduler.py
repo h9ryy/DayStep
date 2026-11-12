@@ -1,15 +1,18 @@
 import asyncio
 import html
 import logging
+from datetime import datetime, date
+from zoneinfo import ZoneInfo
+
 from aiogram import Bot
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import aiosqlite
-from datetime import date
 
-from config import TIMEZONE, DEFAULT_QUEST_HOUR, REMINDER_HOUR, DB_PATH
+from config import TIMEZONE, REMINDER_HOUR, DB_PATH
 from database.db import (
+    get_users_by_notify_hour,
     get_all_active_users,
     assign_today_quest,
     get_today_quest,
@@ -22,9 +25,20 @@ from services.formatters import format_quest_message
 logger = logging.getLogger(__name__)
 
 
-async def send_daily_quests(bot: Bot):
-    logger.info("Starting daily quest broadcast...")
-    user_ids = await get_all_active_users()
+async def send_hourly_quests(bot: Bot):
+    """Срабатывает каждый час и отправляет квесты тем, кто выбрал текущий час."""
+    try:
+        tz = ZoneInfo(TIMEZONE)
+        now_hour = datetime.now(tz).hour
+    except Exception:
+        now_hour = datetime.now().hour
+
+    logger.info(f"Running hourly quest broadcast for {now_hour:02d}:00...")
+    user_ids = await get_users_by_notify_hour(now_hour)
+    if not user_ids:
+        logger.info(f"No users scheduled for {now_hour:02d}:00")
+        return
+
     today_str = date.today().isoformat()
 
     for user_id in user_ids:
@@ -62,7 +76,7 @@ async def send_daily_quests(bot: Bot):
                 await db.execute("UPDATE users SET is_active = 0 WHERE user_id = ?", (user_id,))
                 await db.commit()
         except Exception as e:
-            logger.warning(f"Failed to send daily quest to user {user_id}: {e}")
+            logger.warning(f"Failed to send quest to user {user_id}: {e}")
 
         await asyncio.sleep(0.05)
 
@@ -101,13 +115,15 @@ async def send_evening_reminders(bot: Bot):
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
+    # Почасовая отправка квестов в :00 минут
     scheduler.add_job(
-        send_daily_quests,
-        trigger=CronTrigger(hour=DEFAULT_QUEST_HOUR, minute=0, timezone=TIMEZONE),
+        send_hourly_quests,
+        trigger=CronTrigger(minute=0, timezone=TIMEZONE),
         args=[bot],
-        name="daily_quests"
+        name="hourly_quests"
     )
 
+    # Вечернее напоминание в REMINDER_HOUR:00
     scheduler.add_job(
         send_evening_reminders,
         trigger=CronTrigger(hour=REMINDER_HOUR, minute=0, timezone=TIMEZONE),
