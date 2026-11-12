@@ -8,6 +8,7 @@ def get_main_menu() -> ReplyKeyboardMarkup:
             KeyboardButton(text="🔥 Мой стрик"),
         ],
         [
+            KeyboardButton(text="🏆 Топ игроков"),
             KeyboardButton(text="ℹ️ О боте")
         ]
     ]

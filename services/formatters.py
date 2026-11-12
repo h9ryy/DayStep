@@ -49,3 +49,39 @@ def format_profile_message(user: Dict[str, Any]) -> str:
         f"🎖 <b>Ранг:</b> {level_title}\n\n"
         f"💡 <i>Совет: Не пропускай дни, чтобы стрик не сгорел!</i>"
     )
+
+
+def format_leaderboard_message(all_users: list, current_user_id: int, top_n: int = 10) -> str:
+    if not all_users:
+        return "🏆 <b>Лидерборд пуст!</b>\n\nСтаньте первым, выполнив квест сегодня!"
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = ["🏆 <b>Топ участников по стрикам:</b>\n"]
+
+    user_rank = None
+    user_streak = 0
+
+    for idx, u in enumerate(all_users, start=1):
+        if u["user_id"] == current_user_id:
+            user_rank = idx
+            user_streak = u["active_streak"]
+
+        if idx <= top_n:
+            prefix = medals[idx - 1] if idx <= 3 else f"<b>{idx}.</b>"
+            raw_name = u["first_name"] or u["username"] or f"Игрок #{u['user_id']}"
+            safe_name = html.escape(str(raw_name))
+            streak = u["active_streak"]
+            total = u["total_completed"]
+            lines.append(f"{prefix} {safe_name} — <b>{streak} дн.</b> 🔥 <i>(всего: {total})</i>")
+
+    lines.append("\n" + "—" * 22)
+    if user_rank:
+        if user_rank <= top_n:
+            lines.append(f"⭐️ Ты на <b>#{user_rank} месте</b>! Отличный результат!")
+        else:
+            lines.append(f"👤 Твое место: <b>#{user_rank}</b> (стрик: {user_streak} дн.)\nПродолжай выполнять квесты, чтобы ворваться в топ!")
+    else:
+        lines.append("💡 Выполни квест сегодня, чтобы появиться в рейтинге!")
+
+    return "\n".join(lines)
+

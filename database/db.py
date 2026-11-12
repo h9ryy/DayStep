@@ -81,12 +81,58 @@ async def get_or_create_user(user_id: int, username: Optional[str], first_name: 
             return dict(user)
 
 
+def calculate_active_streak(user: Dict[str, Any], today_str: Optional[str] = None) -> int:
+    """Возвращает актуальный стрик с учетом пропусков."""
+    if not today_str:
+        today_str = date.today().isoformat()
+
+    last_date = user.get("last_completed_date")
+    if not last_date:
+        return 0
+
+    today = date.fromisoformat(today_str)
+    yesterday_str = (today - timedelta(days=1)).isoformat()
+
+    # Стрик активен, только если квест выполнен сегодня или вчера
+    if last_date == today_str or last_date == yesterday_str:
+        return user.get("current_streak", 0)
+    return 0
+
+
 async def get_user(user_id: int) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
             user = await cursor.fetchone()
-            return dict(user) if user else None
+            if not user:
+                return None
+            user_dict = dict(user)
+            user_dict["current_streak"] = calculate_active_streak(user_dict)
+            return user_dict
+
+
+async def get_leaderboard(limit: int = 10) -> List[Dict[str, Any]]:
+    today_str = date.today().isoformat()
+    today = date.fromisoformat(today_str)
+    yesterday_str = (today - timedelta(days=1)).isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # Сортируем: если last_completed_date равен сегодня или вчера, берем current_streak, иначе 0
+        query = """
+            SELECT user_id, username, first_name, max_streak, total_completed, last_completed_date,
+                   CASE 
+                       WHEN last_completed_date IN (?, ?) THEN current_streak 
+                       ELSE 0 
+                   END AS active_streak
+            FROM users
+            WHERE is_active = 1
+            ORDER BY active_streak DESC, total_completed DESC, max_streak DESC
+        """
+        async with db.execute(query, (today_str, yesterday_str)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
 
 
 async def get_all_active_users() -> List[int]:
